@@ -227,6 +227,58 @@ docker compose logs -f --tail 100 api worker web
 
 需要 Node.js 24.11 以上和 PostgreSQL 16 或 17，系统用 Linux 或 macOS；Windows 上请在 WSL2 里运行，或者用上面的 Docker 方式。
 
+### 本机开发：dev.sh（macOS / Linux）
+
+仓库根目录的 `dev.sh` 是开源版自带的本机开发工具，**不是生产部署脚本**；服务器上请用上面的 Docker 方式。脚本在运行时自动检测 macOS / Linux，使用对应系统的路径和命令。
+
+**支持的环境**：
+
+- Node.js >= 24.11（脚本校验到次版本，不满足直接报错）。
+- PostgreSQL：macOS 用 Homebrew 装的任意版本；Linux 用发行版包管理器（`apt` / `yum` / `dnf`）或 PostgreSQL 官方源装的版本。脚本按常见安装位置查找 `pg_ctl`（macOS 的 `/opt/homebrew/opt/postgresql@*/bin`、`/usr/local/opt/postgresql@*/bin`，Linux 的 `/usr/lib/postgresql/*/bin`、`/usr/pgsql-*/bin`、`/usr/bin`），不绑定某个版本。
+- 已在 macOS（Homebrew PostgreSQL 14、Node 24）上实测 `start` / `stop` / `restart` / `status` / `check`、重复启停、改端口、与外部实例共存、启动失败清理。Linux 走同一套 `sh` 逻辑和上面这些路径，但未在 Linux 上实测；如果发行版把 `pg_ctl` 装在别处，把它的目录加进 `PATH` 即可。
+
+**PostgreSQL 怎么用**（脚本不碰别人的数据库）：
+
+- `DATABASE_URL` 指向远程主机 → 直接使用该地址，不启动、不停止任何本地 PostgreSQL。
+- 本机端口已有其他 PostgreSQL 在响应 → 直接使用它（建库、迁移、种子都发往它），但**不停止、不管理**它；`stop` 不会碰它。
+- 本机端口没有响应 → 启动项目专属实例，数据目录 `.data/dev/pgdata`，只监听本机，端口取自 `.env`。`stop` 会停掉它，判断依据就是这个数据目录，与实例是不是本次 `start` 起的无关。
+- 改了 `.env` 里的端口再 `start`：脚本会把专属实例停掉、按新端口改好配置再启动。
+- `.env` 里没有 `DATABASE_URL` 时用 `postgres://127.0.0.1:5432/aihot`，与后端的默认值一致。
+- 建库检查用的 `psql` / `createdb` 与迁移、种子读同一份 `DATABASE_URL`（含用户名和密码），不会出现"检查的是一个库、迁移写的是另一个库"；连不上时直接报错退出。
+
+**其他行为**：
+
+- 每次 `start` 都运行迁移和种子（两者幂等，只应用新增部分），拉取新迁移后重新 `start` 即可生效，不需要删库。
+- 三个服务（api / worker / web）以各自独立的进程组启动，PID 写在 `.data/dev/*.pid`。`stop` 按进程组发 SIGTERM：api / web 等 10 秒，worker 等 210 秒（让进行中的付费调用收尾，和上面"手动启动"一节的要求一致），超时才 SIGKILL；npm 带起的 `node --watch` 子进程一起收掉。
+- 启动后等 api（3001）和 web（3000）端口真正响应；端口被别的程序占用会直接报错，任一步失败会停掉本次启动的服务和专属实例再以非零码退出。
+- 日志在 `.data/dev/*.log`，`./dev.sh logs` 跟踪。
+
+**前提**：
+- macOS：`brew install postgresql`（如果尚未安装）
+- Linux：`sudo apt install postgresql`（Debian/Ubuntu）或 `sudo dnf install postgresql-server`（RHEL/Fedora），或 PostgreSQL 官方源
+
+```bash
+npm ci
+node scripts/init-env.ts --llm-key <你的模型 API Key>
+# 想换库名或用户名，在 .env 里加（可选项）：
+#   DATABASE_URL=postgres://你的用户名@127.0.0.1:5432/myhot
+#   API_BASE_URL=http://127.0.0.1:3001
+
+./dev.sh check   # 只检查环境，不启动任何东西
+./dev.sh start   # 启动专属 PostgreSQL 实例、迁移、种子、三个服务
+./dev.sh status  # 查看运行状态
+./dev.sh logs    # 跟踪日志
+./dev.sh stop    # 停止三个服务和专属实例（外部实例、远程库不动）
+```
+
+**注意**：
+
+- `start` 会启动 worker。`.env` 里 `COLLECT_ENABLED`、`MODEL_CALLS_ENABLED` 是 `true` 时，worker 会真的抓信源、调用模型（和 Docker 部署一样），本地跑着就可能产生费用；只想看界面就把这两项设成 `false`。
+- 复用已有的共享 PostgreSQL 时，需要你的账号在那个实例上有建库权限；用不了就在 `.env` 里换一个端口，让脚本起专属实例。
+- 不适用于生产环境。
+
+### 手动启动
+
 ```bash
 npm ci
 node scripts/init-env.ts --llm-key <你的模型 API Key>
