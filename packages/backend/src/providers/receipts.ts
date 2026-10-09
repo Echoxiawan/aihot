@@ -117,7 +117,7 @@ async function checkBudget(tx: Db, service: string): Promise<void> {
 
 /**
  * Runs a paid request at most once per logical key and returns its raw response.
- * The caller parses the response and commits business results, then calls completeReceipt.
+ * A caller persisting business results completes the receipt in the same transaction.
  */
 export async function paidRequest(req: ReceiptRequest, call: () => Promise<CallOutcome>): Promise<ReceiptResult> {
   const logicalKey = logicalKeyFor(req);
